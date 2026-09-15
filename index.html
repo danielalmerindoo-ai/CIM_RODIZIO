@@ -85,6 +85,9 @@
   .btn-primary:disabled{opacity:0.6;cursor:default;}
   .btn-text{border:none;background:none;color:var(--accent);font-weight:700;font-size:13px;cursor:pointer;padding:4px 2px;}
   .add-person-inline{display:flex;gap:6px;align-items:center;}
+  .team-manager{padding:14px;background:var(--surface);border:1px solid var(--line);border-top:none;margin-top:-18px;margin-bottom:18px;}
+  .team-manager-list{margin-top:12px;display:flex;flex-direction:column;gap:2px;max-height:220px;overflow-y:auto;}
+  .team-manager-item{display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:600;padding:7px 2px;border-bottom:1px solid var(--line);}
 
   /* month nav */
   .month-nav{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:16px;}
@@ -235,7 +238,7 @@ const DEFAULT_TEAM = ["Caciane Sousa","Caroline Koppe","Caroline Castro","Daniel
 const now = new Date();
 const state = {
   team: [], person: null, year: now.getFullYear(), month: now.getMonth(),
-  activeTab: 'meu', monthCache: {}, watched: {}, modalDay: null, modalDraft: null, addingPerson: false
+  activeTab: 'meu', monthCache: {}, watched: {}, modalDay: null, modalDraft: null, managingTeam: false
 };
 
 function pad2(n){ return String(n).padStart(2,'0'); }
@@ -347,32 +350,49 @@ function personRowHTML(){
     <div class="person-row">
       <label>Quem é você?</label>
       <select id="person-select"><option value="">Selecionar…</option>${options}</select>
-      ${state.addingPerson ? `
-        <div class="add-person-inline">
-          <input type="text" id="new-person-input" placeholder="Nome completo" style="width:170px;">
-          <button class="btn btn-primary" id="confirm-add-person">Adicionar</button>
-          <button class="btn-text" id="cancel-add-person">cancelar</button>
-        </div>
-      ` : `<button class="btn-text" id="show-add-person">+ adicionar pessoa</button>`}
+      <button class="btn-text" id="toggle-manage-team">${state.managingTeam ? 'fechar' : 'gerenciar equipe'}</button>
+    </div>
+    ${state.managingTeam ? teamManagerHTML() : ''}`;
+}
+
+function teamManagerHTML(){
+  const rows = state.team.map(n=>`
+    <div class="team-manager-item">
+      <span>${escapeHtml(n)}</span>
+      <button class="btn-text remove-person" data-name="${escapeHtml(n)}" style="color:var(--danger);">remover</button>
+    </div>`).join('');
+  return `
+    <div class="team-manager">
+      <div class="add-person-inline">
+        <input type="text" id="new-person-input" placeholder="Nome completo" style="width:200px;">
+        <button class="btn btn-primary" id="confirm-add-person">Adicionar</button>
+      </div>
+      <div class="team-manager-list">${rows || '<p class="hint">Nenhuma pessoa cadastrada.</p>'}</div>
     </div>`;
 }
 
 function bindPersonRow(afterChange){
   document.getElementById('person-select').onchange = (e)=>{ if(e.target.value){ savePerson(e.target.value); } afterChange(); };
-  const showBtn = document.getElementById('show-add-person');
-  if(showBtn) showBtn.onclick = ()=>{ state.addingPerson = true; afterChange(); };
-  const cancelBtn = document.getElementById('cancel-add-person');
-  if(cancelBtn) cancelBtn.onclick = ()=>{ state.addingPerson = false; afterChange(); };
+  document.getElementById('toggle-manage-team').onclick = ()=>{ state.managingTeam = !state.managingTeam; afterChange(); };
   const confirmBtn = document.getElementById('confirm-add-person');
   if(confirmBtn) confirmBtn.onclick = async ()=>{
     const input = document.getElementById('new-person-input');
     const name = input.value.trim();
     if(!name) return;
     if(!state.team.includes(name)){ state.team.push(name); state.team.sort((a,b)=>a.localeCompare(b,'pt-BR')); await saveTeam(); }
-    state.addingPerson = false;
-    savePerson(name);
+    input.value = '';
     afterChange();
   };
+  document.querySelectorAll('.remove-person').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const name = btn.dataset.name;
+      if(!confirm(`Remover ${name} da equipe? O histórico de dias marcados dessa pessoa não é apagado, mas ela some da lista.`)) return;
+      state.team = state.team.filter(n=>n!==name);
+      await saveTeam();
+      if(state.person === name){ state.person = null; localStorage.removeItem('meu-nome'); }
+      afterChange();
+    };
+  });
 }
 
 function monthNavHTML(){
