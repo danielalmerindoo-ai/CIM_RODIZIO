@@ -219,6 +219,16 @@
   table.team-grid th.occ-low-th{ box-shadow:inset 0 -3px 0 #B23A3A; }
   table.team-grid th.occ-high-th{ box-shadow:inset 0 -3px 0 #B5722E; }
 
+  .rules-side{
+    position:fixed; top:80px; right:28px; width:232px; max-height:calc(100vh - 110px); overflow-y:auto;
+    background:var(--surface); border-radius:var(--radius); box-shadow:var(--shadow); padding:16px; z-index:5;
+  }
+  .rules-side h4{ font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:0.03em; color:var(--accent); margin:0 0 10px; }
+  .rules-side ol{ margin:0; padding-left:18px; }
+  .rules-side li{ font-size:11.5px; line-height:1.5; color:var(--ink-soft); margin-bottom:9px; }
+  .rules-side li b{ color:var(--ink); }
+  @media (max-width:1480px){ .rules-side{ display:none; } }
+
   .loading{padding:60px 0;text-align:center;color:var(--ink-faint);font-weight:600;font-size:13px;}
   .hint{font-size:12px;color:var(--ink-faint);margin-top:6px;}
 
@@ -313,7 +323,7 @@ function presencialCountOn(year, month, day){
   return count;
 }
 function occupancyInfo(count){
-  if(count < MIN_PRESENCIAL_DAY) return { cls:'occ-low', label:`${count} presencial${count===1?'':'is'} hoje · abaixo do mínimo (${MIN_PRESENCIAL_DAY})` };
+  if(count < MIN_PRESENCIAL_DAY) return { cls:'occ-low', label:`${count} presencia${count===1?'l':'is'} hoje · abaixo do mínimo (${MIN_PRESENCIAL_DAY})` };
   if(count > MAX_PRESENCIAL_DAY) return { cls:'occ-high', label:`${count} presenciais · acima do limite (${MAX_PRESENCIAL_DAY})` };
   return { cls:'occ-ok', label:`${count} presenciais · dentro da faixa ideal (${MIN_PRESENCIAL_DAY}–${MAX_PRESENCIAL_DAY})` };
 }
@@ -506,6 +516,17 @@ function render(){
         </div>
       </div>
     </div>
+    <div class="rules-side">
+      <h4>📋 Regras da dinâmica</h4>
+      <ol>
+        <li><b>Mínimo 2 dias presenciais</b> por pessoa na semana.</li>
+        <li><b>Mínimo 5 pessoas</b> presenciais por dia (interação com o time + áreas).</li>
+        <li><b>Máximo 7 pessoas</b> presenciais por dia (limite de lugares).</li>
+        <li>Sem dias fixos de home — <b>flexibilidade</b>, desde que a ocupação acima seja respeitada.</li>
+        <li>Olhe o calendário e quantas pessoas já estão presenciais <b>antes</b> de definir seu home.</li>
+        <li><b>Segundas e sextas</b> são acompanhadas de perto: quem fez home nesses dias tem menor prioridade pra repetir na semana seguinte.</li>
+      </ol>
+    </div>
     <div class="wrap">
       <div class="hero">
         <div class="eyebrow"><span>${hero.eyebrow}</span><i></i></div>
@@ -670,7 +691,7 @@ function weekStatusHTML(){
   if(!state.person) return '';
   const count = weekPresencialCount(state.person, now);
   const ok = count >= MIN_PRESENCIAL_WEEK;
-  return `<div class="week-status ${ok?'ok':'low'}">📅 Esta semana (seg–sex): <b>${count}</b> dia${count===1?'':'s'} presencial${count===1?'':'is'} <span class="hint" style="margin:0;">— mínimo ${MIN_PRESENCIAL_WEEK} por semana</span></div>`;
+  return `<div class="week-status ${ok?'ok':'low'}">📅 Esta semana (seg–sex): <b>${count}</b> dia${count===1?'':'s'} presencia${count===1?'l':'is'} <span class="hint" style="margin:0;">— mínimo ${MIN_PRESENCIAL_WEEK} por semana</span></div>`;
 }
 
 function renderMeuTab(){
