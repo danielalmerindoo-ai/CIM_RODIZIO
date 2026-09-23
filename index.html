@@ -87,7 +87,20 @@
 
   .quick-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
 
+  .paint-toolbar{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; background:var(--surface); border-radius:var(--radius); box-shadow:var(--shadow); padding:12px 16px; margin-bottom:18px; }
+  .paint-opt{ font-family:inherit; font-size:12.5px; font-weight:700; padding:7px 13px; border-radius:9px; border:1.5px solid var(--line-strong); background:var(--surface); color:var(--ink); cursor:pointer; }
+  .paint-opt:hover{ border-color:var(--ink-faint); }
+  .paint-opt.active.sel-P{ background:var(--presencial); border-color:var(--presencial); color:#fff; }
+  .paint-opt.active.sel-H{ background:var(--home); border-color:var(--home); color:#fff; }
+  .paint-opt.active.sel-E{ background:var(--externo); border-color:var(--externo); color:#fff; }
+  .paint-opt.active.sel-O{ background:var(--outro); border-color:var(--outro); color:#fff; }
+  .paint-active-hint{ font-size:11.5px; color:var(--accent); font-weight:700; }
+  .cal-grid.painting .day-cell:not(.blank){ cursor:crosshair; }
+
   .month-nav{display:flex;align-items:center;justify-content:center;gap:18px;margin-bottom:18px;}
+  .month-nav-compact{margin-bottom:0;gap:10px;}
+  .month-nav-compact button{width:26px;height:26px;font-size:12px;}
+  .month-nav-compact .label{font-size:13px;min-width:auto;white-space:nowrap;}
   .month-nav button{width:34px;height:34px;border-radius:9px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:15px;line-height:1;}
   .month-nav button:hover{background:#2340E0;}
   .month-nav .label{font-size:19px;font-weight:800;letter-spacing:-0.01em;min-width:180px;text-align:center;text-transform:capitalize;}
@@ -223,11 +236,18 @@
     position:fixed; top:80px; right:28px; width:232px; max-height:calc(100vh - 110px); overflow-y:auto;
     background:var(--surface); border-radius:var(--radius); box-shadow:var(--shadow); padding:16px; z-index:5;
   }
-  .rules-side h4{ font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:0.03em; color:var(--accent); margin:0 0 10px; }
+  .rules-side-header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .rules-side h4{ font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:0.03em; color:var(--accent); margin:0; }
+  .rules-side-close{ background:none; border:none; cursor:pointer; color:var(--ink-faint); font-size:16px; line-height:1; padding:0 2px; }
   .rules-side ol{ margin:0; padding-left:18px; }
   .rules-side li{ font-size:11.5px; line-height:1.5; color:var(--ink-soft); margin-bottom:9px; }
   .rules-side li b{ color:var(--ink); }
-  @media (max-width:1480px){ .rules-side{ display:none; } }
+  .rules-tab{
+    position:fixed; top:120px; right:0; z-index:5; background:var(--accent); color:#fff; border:none;
+    border-radius:9px 0 0 9px; padding:10px 8px; font-size:11px; font-weight:700; cursor:pointer;
+    writing-mode:vertical-rl; text-orientation:mixed; box-shadow:var(--shadow);
+  }
+  @media (max-width:1480px){ .rules-side, .rules-tab{ display:none; } }
 
   .loading{padding:60px 0;text-align:center;color:var(--ink-faint);font-weight:600;font-size:13px;}
   .hint{font-size:12px;color:var(--ink-faint);margin-top:6px;}
@@ -289,7 +309,7 @@ const now = new Date();
 const state = {
   team: [], person: null, year: now.getFullYear(), month: now.getMonth(),
   activeTab: 'meu', monthCache: {}, watched: {}, modalType: null, modalDay: null, modalDraft: null,
-  bulkDraft: null, managingTeam: false, birthdays: {}, editingBirthdayFor: null, exportDraft: null
+  bulkDraft: null, managingTeam: false, birthdays: {}, editingBirthdayFor: null, exportDraft: null, paintMode: null, rulesPanelOpen: false
 };
 
 /* ---------- helpers ---------- */
@@ -516,8 +536,12 @@ function render(){
         </div>
       </div>
     </div>
+    ${state.rulesPanelOpen ? `
     <div class="rules-side">
-      <h4>📋 Regras da dinâmica</h4>
+      <div class="rules-side-header">
+        <h4>📋 Regras da dinâmica</h4>
+        <button class="rules-side-close" id="rules-close" aria-label="Fechar">✕</button>
+      </div>
       <ol>
         <li><b>Mínimo 2 dias presenciais</b> por pessoa na semana.</li>
         <li><b>Mínimo 5 pessoas</b> presenciais por dia (interação com o time + áreas).</li>
@@ -527,6 +551,7 @@ function render(){
         <li><b>Segundas e sextas</b> são acompanhadas de perto: quem fez home nesses dias tem menor prioridade pra repetir na semana seguinte.</li>
       </ol>
     </div>
+    ` : `<button class="rules-tab" id="rules-open">📋 Regras da dinâmica</button>`}
     <div class="wrap">
       <div class="hero">
         <div class="eyebrow"><span>${hero.eyebrow}</span><i></i></div>
@@ -548,6 +573,10 @@ function render(){
     </div>`;
 
   document.getElementById('theme-toggle').onclick = toggleTheme;
+  const rulesOpenBtn = document.getElementById('rules-open');
+  if(rulesOpenBtn) rulesOpenBtn.onclick = ()=>{ state.rulesPanelOpen = true; render(); };
+  const rulesCloseBtn = document.getElementById('rules-close');
+  if(rulesCloseBtn) rulesCloseBtn.onclick = ()=>{ state.rulesPanelOpen = false; render(); };
   app.querySelectorAll('.nav-tab').forEach(b=>{ b.onclick = ()=>{ state.activeTab = b.dataset.tab; render(); }; });
   const reminderBtn = document.getElementById('reminder-fill');
   if(reminderBtn) reminderBtn.onclick = ()=>{
@@ -668,19 +697,19 @@ function bindPersonRow(afterChange){
 }
 
 /* ---------- month nav ---------- */
-function monthNavHTML(){
-  return `<div class="month-nav">
-    <button id="prev-month" aria-label="Mês anterior">‹</button>
+function monthNavHTML(suffix='', compact=false){
+  return `<div class="month-nav ${compact?'month-nav-compact':''}">
+    <button id="prev-month${suffix}" aria-label="Mês anterior">‹</button>
     <div class="label">${MONTHS[state.month]} de ${state.year}</div>
-    <button id="next-month" aria-label="Próximo mês">›</button>
+    <button id="next-month${suffix}" aria-label="Próximo mês">›</button>
   </div>`;
 }
-function bindMonthNav(afterChange){
-  document.getElementById('prev-month').onclick = ()=>{
+function bindMonthNav(afterChange, suffix=''){
+  document.getElementById(`prev-month${suffix}`).onclick = ()=>{
     state.month-=1; if(state.month<0){state.month=11; state.year-=1;}
     watchMonth(monthKey(state.year,state.month)); afterChange();
   };
-  document.getElementById('next-month').onclick = ()=>{
+  document.getElementById(`next-month${suffix}`).onclick = ()=>{
     state.month+=1; if(state.month>11){state.month=0; state.year+=1;}
     watchMonth(monthKey(state.year,state.month)); afterChange();
   };
@@ -694,9 +723,19 @@ function weekStatusHTML(){
   return `<div class="week-status ${ok?'ok':'low'}">📅 Esta semana (seg–sex): <b>${count}</b> dia${count===1?'':'s'} presencia${count===1?'l':'is'} <span class="hint" style="margin:0;">— mínimo ${MIN_PRESENCIAL_WEEK} por semana</span></div>`;
 }
 
+function paintToolbarHTML(){
+  if(!state.person) return '';
+  const opt = (code)=>`<button class="paint-opt ${state.paintMode===code?'active sel-'+code:''}" data-paint="${code}">${STATUS_META[code].label}</button>`;
+  return `
+    <div class="paint-toolbar">
+      <span class="hint" style="margin:0;">✏️ Preenchimento rápido:</span>
+      ${opt('P')}${opt('H')}${opt('E')}${opt('O')}
+    </div>`;
+}
+
 function renderMeuTab(){
   const el = document.getElementById('tab-content');
-  el.innerHTML = personRowHTML() + weekStatusHTML() + `
+  el.innerHTML = personRowHTML() + weekStatusHTML() + paintToolbarHTML() + `
     <div class="quick-actions">
       <button class="btn" id="bulk-fill-btn">🗓️ Preencher / limpar período</button>
     </div>
@@ -704,7 +743,27 @@ function renderMeuTab(){
   bindPersonRow(renderMeuTab);
   bindMonthNav(renderMeuTab);
   document.getElementById('bulk-fill-btn').onclick = openBulkModal;
+  document.querySelectorAll('.paint-opt').forEach(b=>{
+    b.onclick = ()=>{
+      const code = b.dataset.paint;
+      state.paintMode = (state.paintMode===code) ? null : code;
+      renderMeuTab();
+    };
+  });
   renderCalendar();
+}
+
+async function quickToggleDay(day){
+  const key = monthKey(state.year, state.month);
+  const monthData = state.monthCache[key] || (state.monthCache[key] = {});
+  const existing = getEntry(monthData, state.person, day);
+  const statuses = existing ? [...existing.statuses] : [];
+  const idx = statuses.indexOf(state.paintMode);
+  if(idx>-1) statuses.splice(idx,1); else statuses.push(state.paintMode);
+  const entry = statuses.length ? { ...(existing||{}), statuses } : null;
+  setEntry(monthData, state.person, day, entry);
+  renderCalendar();
+  await saveMonth(key);
 }
 
 function renderCalendar(){
@@ -738,7 +797,7 @@ function renderCalendar(){
 
   holder.innerHTML = `
     <div class="weekday-row">${WEEKDAYS.map(w=>`<div>${w}</div>`).join('')}</div>
-    <div class="cal-grid">${cells}</div>
+    <div class="cal-grid ${state.paintMode?'painting':''}">${cells}</div>
     <div class="legend">
       <div class="legend-item"><span class="dot dot-P"></span>Presencial</div>
       <div class="legend-item"><span class="dot dot-H"></span>Home office</div>
@@ -747,7 +806,9 @@ function renderCalendar(){
       <div class="legend-item"><span class="dot dot-feriado"></span>Feriado</div>
       <div class="legend-item">🎂 Aniversário</div>
     </div>`;
-  holder.querySelectorAll('.day-cell:not(.blank)').forEach(c=>{ c.onclick = ()=> openModal(parseInt(c.dataset.day,10)); });
+  holder.querySelectorAll('.day-cell:not(.blank)').forEach(c=>{
+    c.onclick = ()=> state.paintMode ? quickToggleDay(parseInt(c.dataset.day,10)) : openModal(parseInt(c.dataset.day,10));
+  });
 }
 
 /* ---------- modal (dia único + período) ---------- */
@@ -1113,7 +1174,10 @@ function renderPainelContent(){
       <div class="bday-row">${bdayCardsHTML}</div>
     </div>` : ''}
     <div class="grid-section">
-      <h2>${MONTHS[state.month]} de ${state.year} · visão completa</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+        <h2 style="margin:0;">${MONTHS[state.month]} de ${state.year} · visão completa</h2>
+        ${monthNavHTML('-b', true)}
+      </div>
       <table class="team-grid">
         <thead><tr><th style="text-align:left;">Colaborador</th>${headerCells}<th>P</th><th>H</th><th>E</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -1129,6 +1193,7 @@ function renderPainelContent(){
         <div class="legend-item"><span style="width:9px;height:9px;box-shadow:inset 0 -3px 0 #B5722E;display:inline-block;"></span>Acima de ${MAX_PRESENCIAL_DAY} presenciais</div>
       </div>
     </div>`;
+  bindMonthNav(renderPainelTab, '-b');
 }
 
 /* ---------- start ---------- */
