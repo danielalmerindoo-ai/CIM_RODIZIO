@@ -233,6 +233,9 @@
     .bday-badge, .bday-badge-fallback{width:24px;height:24px;font-size:9px;}
   }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.js"></script>
 </head>
 <body>
 <div id="app"><div class="loading">Carregando…</div></div>
@@ -276,7 +279,7 @@ const now = new Date();
 const state = {
   team: [], person: null, year: now.getFullYear(), month: now.getMonth(),
   activeTab: 'meu', monthCache: {}, watched: {}, modalType: null, modalDay: null, modalDraft: null,
-  bulkDraft: null, managingTeam: false, birthdays: {}, editingBirthdayFor: null
+  bulkDraft: null, managingTeam: false, birthdays: {}, editingBirthdayFor: null, exportDraft: null
 };
 
 /* ---------- helpers ---------- */
@@ -746,13 +749,15 @@ function openBulkModal(){
   state.bulkDraft = { start:1, end:1, statuses:[], local:'', note:'' };
   render();
 }
-function closeModal(){ state.modalType=null; state.modalDay=null; state.modalDraft=null; state.bulkDraft=null; const ov=document.getElementById('overlay'); if(ov) ov.remove(); render(); }
+function closeModal(){ state.modalType=null; state.modalDay=null; state.modalDraft=null; state.bulkDraft=null; state.exportDraft=null; const ov=document.getElementById('overlay'); if(ov) ov.remove(); render(); }
 
 function renderModal(){
   let ov = document.getElementById('overlay');
   if(!ov){ ov = document.createElement('div'); ov.className='overlay'; ov.id='overlay'; document.body.appendChild(ov);
     ov.addEventListener('click', (e)=>{ if(e.target===ov) closeModal(); }); }
-  if(state.modalType==='day') renderDayModal(ov); else renderBulkModal(ov);
+  if(state.modalType==='day') renderDayModal(ov);
+  else if(state.modalType==='bulk') renderBulkModal(ov);
+  else if(state.modalType==='export') renderExportModal(ov);
 }
 
 function renderDayModal(ov){
@@ -876,11 +881,129 @@ function renderBulkModal(ov){
   };
 }
 
+/* ---------- exportar relatório ---------- */
+function openExportModal(){
+  state.modalType = 'export';
+  state.exportDraft = { year: state.year, month: state.month };
+  render();
+}
+
+function renderExportModal(ov){
+  const d = state.exportDraft;
+  const monthOpts = MONTHS.map((m,i)=>`<option value="${i}" ${i===d.month?'selected':''}>${m}</option>`).join('');
+  ov.innerHTML = `
+    <div class="modal">
+      <h3>Exportar relatório</h3>
+      <div class="modal-person">Resumo de cada colaborador no mês escolhido, com sinalização de quem não cumpriu o mínimo de ${MIN_PRESENCIAL_WEEK} dias presenciais em alguma semana.</div>
+      <div class="range-row">
+        <div class="sub-field"><label>Mês</label><select id="export-month">${monthOpts}</select></div>
+        <div class="sub-field"><label>Ano</label><input type="number" id="export-year" value="${d.year}" min="2024" max="2035"></div>
+      </div>
+      <div class="modal-actions" style="gap:10px;">
+        <button class="btn-text" id="close-modal">cancelar</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn" id="export-xlsx-btn">⬇️ Excel</button>
+          <button class="btn btn-primary" id="export-pdf-btn">⬇️ PDF</button>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('export-month').onchange = (e)=>{ state.exportDraft.month = parseInt(e.target.value,10); };
+  document.getElementById('export-year').onchange = (e)=>{ state.exportDraft.year = parseInt(e.target.value,10); };
+  document.getElementById('close-modal').onclick = closeModal;
+  document.getElementById('export-xlsx-btn').onclick = async (e)=>{
+    e.target.textContent = 'Gerando…';
+    const { rows, year, month } = await buildReportData(state.exportDraft.year, state.exportDraft.month);
+    exportExcel(rows, year, month);
+    e.target.textContent = '⬇️ Excel';
+  };
+  document.getElementById('export-pdf-btn').onclick = async (e)=>{
+    e.target.textContent = 'Gerando…';
+    const { rows, year, month } = await buildReportData(state.exportDraft.year, state.exportDraft.month);
+    exportPDF(rows, year, month);
+    e.target.textContent = '⬇️ PDF';
+  };
+}
+
+async function buildReportData(year, month){
+  const key = monthKey(year, month);
+  const data = await getMonthDataOnce(key);
+  const nDays = daysInMonth(year, month);
+
+  const weeksMap = {};
+  for(let d=1; d<=nDays; d++){
+    const date = new Date(year, month, d);
+    const dow = date.getDay();
+    if(dow===0 || dow===6) continue;
+    const mkey = dateKey(weekMondayOf(date));
+    if(!weeksMap[mkey]) weeksMap[mkey] = [];
+    weeksMap[mkey].push(d);
+  }
+  const weekKeys = Object.keys(weeksMap).sort();
+
+  const rows = state.team.map(person=>{
+    const totals = { P:0, H:0, E:0, O:0 };
+    let weeksBelow = 0;
+    weekKeys.forEach(wk=>{
+      let pCount = 0;
+      weeksMap[wk].forEach(d=>{
+        const e = getEntry(data, person, d);
+        if(e && e.statuses){
+          e.statuses.forEach(s=>{ totals[s] = (totals[s]||0)+1; });
+          if(e.statuses.includes('P')) pCount++;
+        }
+      });
+      if(pCount < MIN_PRESENCIAL_WEEK) weeksBelow++;
+    });
+    return {
+      nome: person, presencial: totals.P, homeoffice: totals.H, externo: totals.E, outro: totals.O,
+      semanasAbaixo: weeksBelow, totalSemanas: weekKeys.length,
+      status: weeksBelow>0 ? 'Ofensor' : 'Cumprindo'
+    };
+  });
+  return { rows, year, month };
+}
+
+function exportExcel(rows, year, month){
+  const header = ['Colaborador','Presencial','Home Office','Externo','Outro','Semanas abaixo da meta','Total de semanas','Status'];
+  const aoa = [header, ...rows.map(r=>[r.nome, r.presencial, r.homeoffice, r.externo, r.outro, r.semanasAbaixo, r.totalSemanas, r.status])];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{wch:22},{wch:11},{wch:13},{wch:9},{wch:8},{wch:22},{wch:15},{wch:12}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Relatório');
+  XLSX.writeFile(wb, `relatorio-rodizio-${MONTHS[month]}-${year}.xlsx`);
+}
+
+function exportPDF(rows, year, month){
+  const { jsPDF } = window.jspdf;
+  const docpdf = new jsPDF();
+  docpdf.setFontSize(16); docpdf.text('Relatório · Rodízio CIM', 14, 18);
+  docpdf.setFontSize(11); docpdf.setTextColor(90,97,120); docpdf.text(`${MONTHS[month]} de ${year}`, 14, 26);
+  docpdf.autoTable({
+    startY: 32,
+    head: [['Colaborador','P','H','E','O','Semanas abaixo','Status']],
+    body: rows.map(r=>[r.nome, r.presencial, r.homeoffice, r.externo, r.outro, `${r.semanasAbaixo}/${r.totalSemanas}`, r.status]),
+    styles:{ fontSize:9, cellPadding:4 },
+    headStyles:{ fillColor:[46,79,255], textColor:[255,255,255] },
+    didParseCell: function(cellData){
+      if(cellData.section==='body' && cellData.column.index===6 && cellData.cell.raw==='Ofensor'){
+        cellData.cell.styles.textColor = [178,58,58];
+        cellData.cell.styles.fontStyle = 'bold';
+      }
+    }
+  });
+  docpdf.save(`relatorio-rodizio-${MONTHS[month]}-${year}.pdf`);
+}
+
 /* ---------- painel da equipe ---------- */
 function renderPainelTab(){
   const el = document.getElementById('tab-content');
-  el.innerHTML = monthNavHTML() + `<div id="painel-holder"></div>`;
+  el.innerHTML = monthNavHTML() + `
+    <div class="quick-actions" style="justify-content:center;">
+      <button class="btn" id="export-report-btn">📄 Exportar relatório</button>
+    </div>
+  ` + `<div id="painel-holder"></div>`;
   bindMonthNav(renderPainelTab);
+  document.getElementById('export-report-btn').onclick = openExportModal;
   renderPainelContent();
 }
 
