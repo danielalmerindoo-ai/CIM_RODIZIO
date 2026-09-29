@@ -147,6 +147,9 @@
 
   .today-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
   .stat{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;position:relative;overflow:hidden;}
+  .stat.clickable{cursor:pointer;transition:transform 0.1s;}
+  .stat.clickable:hover{transform:translateY(-1px);}
+  .stat.active-filter{box-shadow:0 0 0 2px var(--accent), var(--shadow);}
   .stat .ribbon{position:absolute;top:0;right:14px;width:22px;height:30px;clip-path:polygon(0 0,100% 0,100% 100%,50% 78%,0 100%);}
   .stat.num-P .ribbon{background:var(--presencial);} .stat.num-H .ribbon{background:var(--home);}
   .stat.num-E .ribbon{background:var(--externo);} .stat.num-miss .ribbon{background:var(--danger);}
@@ -309,7 +312,7 @@ const now = new Date();
 const state = {
   team: [], person: null, year: now.getFullYear(), month: now.getMonth(),
   activeTab: 'meu', monthCache: {}, watched: {}, modalType: null, modalDay: null, modalDraft: null,
-  bulkDraft: null, managingTeam: false, birthdays: {}, editingBirthdayFor: null, exportDraft: null, paintMode: null, rulesPanelOpen: false
+  bulkDraft: null, managingTeam: false, birthdays: {}, editingBirthdayFor: null, exportDraft: null, paintMode: null, rulesPanelOpen: false, todayFilter: null
 };
 
 /* ---------- helpers ---------- */
@@ -1024,21 +1027,30 @@ async function buildReportData(year, month){
 
   const rows = state.team.map(person=>{
     const totals = { P:0, H:0, E:0, O:0 };
-    let weeksBelow = 0;
+    let weeksBelow = 0, weeksCounted = 0;
     weekKeys.forEach(wk=>{
       let pCount = 0;
+      let eligibleDays = 0; // dias que entram no cálculo do mínimo (exclui Externo/Outro puros)
       weeksMap[wk].forEach(d=>{
         const e = getEntry(data, person, d);
         if(e && e.statuses){
           e.statuses.forEach(s=>{ totals[s] = (totals[s]||0)+1; });
-          if(e.statuses.includes('P')) pCount++;
+          const isExempt = (e.statuses.includes('E') || e.statuses.includes('O')) && !e.statuses.includes('P');
+          if(!isExempt){ eligibleDays++; if(e.statuses.includes('P')) pCount++; }
+        } else {
+          // dia não preenchido: conta como elegível (pode pesar contra a pessoa)
+          eligibleDays++;
         }
       });
-      if(pCount < MIN_PRESENCIAL_WEEK) weeksBelow++;
+      if(eligibleDays > 0){
+        weeksCounted++;
+        const requiredMin = Math.min(MIN_PRESENCIAL_WEEK, eligibleDays);
+        if(pCount < requiredMin) weeksBelow++;
+      }
     });
     return {
       nome: person, presencial: totals.P, homeoffice: totals.H, externo: totals.E, outro: totals.O,
-      semanasAbaixo: weeksBelow, totalSemanas: weekKeys.length,
+      semanasAbaixo: weeksBelow, totalSemanas: weeksCounted,
       status: weeksBelow>0 ? 'Ofensor' : 'Cumprindo'
     };
   });
@@ -1097,14 +1109,23 @@ function renderPainelContent(){
   const d = now.getDate();
 
   let cP=0,cH=0,cE=0,cMiss=0;
-  const chips = state.team.map(person=>{
+  const chipData = state.team.map(person=>{
     const entry = getEntry(todayData, person, d);
     const hasEntry = entry && entry.statuses && entry.statuses.length;
     if(hasEntry){ entry.statuses.forEach(s=>{ if(s==='P')cP++; else if(s==='H')cH++; else if(s==='E')cE++; }); } else cMiss++;
     const cls = hasEntry ? `st-${entry.statuses[0]}` : 'st-none';
     const label = hasEntry ? entry.statuses.map(s=> s==='E'&&entry.local ? `Externo · ${entry.local}` : STATUS_META[s].label).join(' + ') : 'não preenchido';
-    return `<div class="chip ${cls}"><span class="cdot"></span>${escapeHtml(person)} — ${label}</div>`;
-  }).join('');
+    const statuses = hasEntry ? entry.statuses : [];
+    return { person, cls, label, statuses, filled: !!hasEntry };
+  });
+  const filterMatch = (c)=>{
+    if(!state.todayFilter) return true;
+    if(state.todayFilter==='miss') return !c.filled;
+    return c.statuses.includes(state.todayFilter);
+  };
+  const chips = chipData.filter(filterMatch).map(c=>
+    `<div class="chip ${c.cls}"><span class="cdot"></span>${escapeHtml(c.person)} — ${c.label}</div>`
+  ).join('') || `<p class="hint">Ninguém nessa categoria hoje.</p>`;
 
   const key = monthKey(state.year, state.month);
   const monthData = state.monthCache[key] || {};
@@ -1157,15 +1178,16 @@ function renderPainelContent(){
       <div><div class="name">${escapeHtml(b.name)}</div><div class="date">🎂 dia ${b.dia}</div></div>
     </div>`).join('');
 
+  const filterLabels = { P:'Presencial', H:'Home office', E:'Externo', miss:'Não preencheram' };
   holder.innerHTML = `
     <div class="today-summary">
-      <div class="stat num-P"><div class="ribbon"></div><div class="num">${cP}</div><div class="lbl">Presencial hoje</div></div>
-      <div class="stat num-H"><div class="ribbon"></div><div class="num">${cH}</div><div class="lbl">Home office hoje</div></div>
-      <div class="stat num-E"><div class="ribbon"></div><div class="num">${cE}</div><div class="lbl">Externo hoje</div></div>
-      <div class="stat num-miss"><div class="ribbon"></div><div class="num">${cMiss}</div><div class="lbl">Não preencheram</div></div>
+      <div class="stat num-P clickable ${state.todayFilter==='P'?'active-filter':''}" data-filter="P"><div class="ribbon"></div><div class="num">${cP}</div><div class="lbl">Presencial hoje</div></div>
+      <div class="stat num-H clickable ${state.todayFilter==='H'?'active-filter':''}" data-filter="H"><div class="ribbon"></div><div class="num">${cH}</div><div class="lbl">Home office hoje</div></div>
+      <div class="stat num-E clickable ${state.todayFilter==='E'?'active-filter':''}" data-filter="E"><div class="ribbon"></div><div class="num">${cE}</div><div class="lbl">Externo hoje</div></div>
+      <div class="stat num-miss clickable ${state.todayFilter==='miss'?'active-filter':''}" data-filter="miss"><div class="ribbon"></div><div class="num">${cMiss}</div><div class="lbl">Não preencheram</div></div>
     </div>
     <div class="today-list">
-      <h2>Hoje · ${now.toLocaleDateString('pt-BR',{day:'numeric',month:'long'})}</h2>
+      <h2>Hoje · ${now.toLocaleDateString('pt-BR',{day:'numeric',month:'long'})}${state.todayFilter ? ` · filtrado: ${filterLabels[state.todayFilter]} <button class="btn-text" id="clear-today-filter" style="text-transform:none;font-weight:700;">limpar filtro</button>` : ''}</h2>
       <div class="chip-row">${chips}</div>
     </div>
     ${monthBdays.length ? `
@@ -1194,6 +1216,15 @@ function renderPainelContent(){
       </div>
     </div>`;
   bindMonthNav(renderPainelTab, '-b');
+  document.querySelectorAll('.stat.clickable').forEach(el=>{
+    el.onclick = ()=>{
+      const f = el.dataset.filter;
+      state.todayFilter = (state.todayFilter===f) ? null : f;
+      renderPainelContent();
+    };
+  });
+  const clearBtn = document.getElementById('clear-today-filter');
+  if(clearBtn) clearBtn.onclick = (e)=>{ e.stopPropagation(); state.todayFilter = null; renderPainelContent(); };
 }
 
 /* ---------- start ---------- */
