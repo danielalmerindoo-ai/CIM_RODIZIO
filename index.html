@@ -291,7 +291,7 @@ const SHARED_PASSCODE = "cim2026";
 /* ===================================================================== */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, onSnapshot, deleteField } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 const fbApp = initializeApp(firebaseConfig);
 const db = getFirestore(fbApp);
@@ -463,8 +463,32 @@ async function getMonthDataOnce(key){
   watchMonth(key);
   return state.monthCache[key];
 }
+async function withRetry(fn, attempts=3){
+  for(let i=0;i<attempts;i++){
+    try{ return await fn(); }
+    catch(e){
+      if(i===attempts-1) throw e;
+      await new Promise(r=>setTimeout(r, 350*(i+1)));
+    }
+  }
+}
+// Grava só os campos (pessoa.dia) que mudaram, em vez de reescrever o mês inteiro —
+// evita que duas pessoas salvando ao mesmo tempo apaguem a alteração uma da outra.
+async function saveEntries(key, person, dayEntryMap){
+  const payload = {};
+  for(const [day, entry] of Object.entries(dayEntryMap)){
+    payload[`${person}.${day}`] = (entry===null || entry===undefined) ? deleteField() : entry;
+  }
+  try{
+    await withRetry(()=> setDoc(doc(db,'meses',key), payload, { merge:true }));
+  }catch(e){
+    console.error(e);
+    alert('Não foi possível salvar agora. Verifique sua conexão e tente novamente.');
+  }
+}
 async function saveMonth(key){
-  try{ await setDoc(doc(db,'meses',key), state.monthCache[key] || {}); }
+  // mantido apenas para compatibilidade; não deve ser usado para gravar dias individuais
+  try{ await withRetry(()=> setDoc(doc(db,'meses',key), state.monthCache[key] || {})); }
   catch(e){ console.error(e); alert('Não foi possível salvar agora. Verifique sua conexão e tente novamente.'); }
 }
 function watchTeam(){
@@ -812,7 +836,7 @@ async function quickToggleDay(day){
   const entry = statuses.length ? { ...(existing||{}), statuses } : null;
   setEntry(monthData, state.person, day, entry);
   renderCalendar();
-  await saveMonth(key);
+  await saveEntries(key, state.person, { [day]: entry });
 }
 
 function renderCalendar(){
@@ -953,19 +977,16 @@ function renderDayModal(ov){
   document.getElementById('clear-day').onclick = async ()=>{
     const key = monthKey(state.year, state.month);
     setEntry(state.monthCache[key], state.person, state.modalDay, null);
-    await saveMonth(key); closeModal();
+    await saveEntries(key, state.person, { [state.modalDay]: null }); closeModal();
   };
   document.getElementById('close-modal').onclick = closeModal;
 }
 
 async function persistDayDraft(){
   const key = monthKey(state.year, state.month);
-  if(state.modalDraft.statuses && state.modalDraft.statuses.length){
-    setEntry(state.monthCache[key], state.person, state.modalDay, {...state.modalDraft});
-  } else {
-    setEntry(state.monthCache[key], state.person, state.modalDay, null);
-  }
-  await saveMonth(key);
+  const entry = (state.modalDraft.statuses && state.modalDraft.statuses.length) ? {...state.modalDraft} : null;
+  setEntry(state.monthCache[key], state.person, state.modalDay, entry);
+  await saveEntries(key, state.person, { [state.modalDay]: entry });
 }
 
 function renderBulkModal(ov){
@@ -1015,8 +1036,9 @@ function renderBulkModal(ov){
     if(!confirm(`Limpar os dias ${start} a ${end} de ${escapeHtml(state.person)}? Essa ação não pode ser desfeita.`)) return;
     const key = monthKey(state.year, state.month);
     const monthData = state.monthCache[key] || (state.monthCache[key] = {});
-    for(let day=start; day<=end; day++){ setEntry(monthData, state.person, day, null); }
-    await saveMonth(key);
+    const dayEntryMap = {};
+    for(let day=start; day<=end; day++){ setEntry(monthData, state.person, day, null); dayEntryMap[day] = null; }
+    await saveEntries(key, state.person, dayEntryMap);
     closeModal();
   };
   document.getElementById('apply-bulk').onclick = async ()=>{
@@ -1025,10 +1047,13 @@ function renderBulkModal(ov){
     const start = Math.min(dd.start, dd.end), end = Math.max(dd.start, dd.end);
     const key = monthKey(state.year, state.month);
     const monthData = state.monthCache[key] || (state.monthCache[key] = {});
+    const dayEntryMap = {};
     for(let day=start; day<=end; day++){
-      setEntry(monthData, state.person, day, { statuses:[...dd.statuses], local: dd.local, note: dd.note });
+      const entry = { statuses:[...dd.statuses], local: dd.local, note: dd.note };
+      setEntry(monthData, state.person, day, entry);
+      dayEntryMap[day] = entry;
     }
-    await saveMonth(key);
+    await saveEntries(key, state.person, dayEntryMap);
     closeModal();
   };
 }
