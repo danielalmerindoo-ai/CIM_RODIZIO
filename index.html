@@ -609,7 +609,7 @@ function render(){
         <p class="hero-sub">${hero.sub}</p>
         <button class="btn-text" id="rules-open-inline" style="padding-left:0;margin-top:6px;">📋 Ver regras da dinâmica</button>
       </div>
-      ${monthReminderHTML()}
+      ${state.activeTab==='painel' ? monthReminderHTML() : ''}
       ${showReminder ? `
         <div class="reminder-banner">
           <span>👋 ${escapeHtml(state.person)}, você ainda não marcou seu dia de hoje.</span>
