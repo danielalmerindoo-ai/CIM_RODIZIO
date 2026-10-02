@@ -475,10 +475,11 @@ async function withRetry(fn, attempts=3){
 // Grava só os campos (pessoa.dia) que mudaram, em vez de reescrever o mês inteiro —
 // evita que duas pessoas salvando ao mesmo tempo apaguem a alteração uma da outra.
 async function saveEntries(key, person, dayEntryMap){
-  const payload = {};
+  const personPayload = {};
   for(const [day, entry] of Object.entries(dayEntryMap)){
-    payload[`${person}.${day}`] = (entry===null || entry===undefined) ? deleteField() : entry;
+    personPayload[day] = (entry===null || entry===undefined) ? deleteField() : entry;
   }
+  const payload = { [person]: personPayload };
   try{
     await withRetry(()=> setDoc(doc(db,'meses',key), payload, { merge:true }));
   }catch(e){
