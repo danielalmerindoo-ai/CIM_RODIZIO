@@ -192,6 +192,12 @@
   .app-footer .tagline{font-size:13px;color:#A9B0D6;}
   .app-footer .tagline b{color:#fff;font-weight:700;}
 
+  .day-occ{
+    position:absolute; bottom:3px; right:4px; font-size:12px; font-weight:800; line-height:1.3;
+  }
+  .day-occ.occ-low{ color:#B23A3A; font-size:15px; }
+  .day-occ.occ-ok{ color:var(--home); }
+  .day-occ.occ-high{ color:#B5722E; font-size:14px; }
   .bday-badge{
     position:absolute; top:4px; right:4px; width:34px; height:34px; border-radius:50%;
     object-fit:cover; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,0.3);
@@ -803,7 +809,7 @@ function paintToolbarHTML(){
   return `
     <div class="paint-toolbar">
       <span class="hint" style="margin:0;">✏️ Preenchimento rápido:</span>
-      ${opt('P')}${opt('H')}${opt('E')}${opt('O')}
+      ${opt('P')}${opt('H')}
     </div>`;
 }
 
@@ -864,7 +870,14 @@ function renderCalendar(){
     const bdayHTML = bdays.length ? (bdays[0].foto
       ? `<img class="bday-badge" src="${bdays[0].foto}" title="🎂 ${escapeHtml(bdays.map(b=>b.name).join(', '))}">`
       : `<div class="bday-badge-fallback" title="🎂 ${escapeHtml(bdays.map(b=>b.name).join(', '))}">${initials(bdays[0].name)}</div>`) : '';
-    cells += `<div class="day-cell ${weekend?'weekend':''} ${holiday?'holiday':''} ${todayClass}" ${bgStyle} data-day="${d}" title="${holiday?escapeHtml(holiday):''}"><div class="day-num">${d}</div>${badges}${bdayHTML}</div>`;
+    let occHTML = '';
+    if(!weekend && !holiday){
+      const pCount = presencialCountOn(state.year, state.month, d);
+      const occCls = pCount < MIN_PRESENCIAL_DAY ? 'occ-low' : pCount > MAX_PRESENCIAL_DAY ? 'occ-high' : 'occ-ok';
+      const icon = occCls==='occ-low' ? '⚠️' : '👥';
+      occHTML = `<div class="day-occ ${occCls}" title="${pCount} presenciais nesse dia (mín ${MIN_PRESENCIAL_DAY} / máx ${MAX_PRESENCIAL_DAY})">${icon}${pCount}</div>`;
+    }
+    cells += `<div class="day-cell ${weekend?'weekend':''} ${holiday?'holiday':''} ${todayClass}" ${bgStyle} data-day="${d}" title="${holiday?escapeHtml(holiday):''}"><div class="day-num">${d}</div>${badges}${bdayHTML}${occHTML}</div>`;
   }
   const trail = (7 - ((lead + nDays) % 7)) % 7;
   for(let i=0;i<trail;i++) cells += `<div class="day-cell blank"></div>`;
@@ -946,6 +959,7 @@ function renderDayModal(ov){
   const occ = occupancyInfo(presencialCountOn(state.year, state.month, state.modalDay));
   const nudge = weekdayNudgeText(state.year, state.month, state.modalDay, state.person);
 
+  const existingPH = d.statuses.filter(s=>s==='P'||s==='H');
   let subField = '';
   if(d.statuses.includes('E')) subField += `<div class="sub-field"><label>Local</label><select id="local-select"><option value="">Selecionar…</option>${LOCAL_OPTIONS.map(l=>`<option value="${l}" ${d.local===l?'selected':''}>${l}</option>`).join('')}</select></div>`;
   if(d.statuses.includes('O')) subField += `<div class="sub-field"><label>Observação</label><input type="text" id="note-input" value="${escapeHtml(d.note||'')}" placeholder="ex: férias, atestado, folga…"></div>`;
@@ -953,10 +967,11 @@ function renderDayModal(ov){
   ov.innerHTML = `
     <div class="modal">
       <h3>${dateLabel}</h3>
-      <div class="modal-person">${escapeHtml(state.person)}${holiday ? ' · Feriado: '+escapeHtml(holiday) : ''} · toque em mais de uma opção se o dia foi dividido</div>
+      <div class="modal-person">${escapeHtml(state.person)}${holiday ? ' · Feriado: '+escapeHtml(holiday) : ''} · para Presencial/Home Office, use o preenchimento rápido no calendário</div>
+      ${existingPH.length ? `<div class="occ-line occ-ok" style="margin-bottom:10px;">Já marcado: ${existingPH.map(s=>STATUS_META[s].label).join(' + ')}</div>` : ''}
       <div class="occ-line ${occ.cls}">🏢 ${occ.label}</div>
       ${nudge ? `<div class="nudge-line">⚠️ ${escapeHtml(nudge)}</div>` : ''}
-      <div class="status-options">${opt('P')}${opt('H')}${opt('E')}${opt('O')}</div>
+      <div class="status-options">${opt('E')}${opt('O')}</div>
       ${subField}
       <div class="modal-actions">
         <button class="btn-text" id="clear-day" style="color:var(--danger);">limpar dia</button>
