@@ -297,7 +297,7 @@ const SHARED_PASSCODE = "cim2026";
 /* ===================================================================== */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, onSnapshot, deleteField } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, onSnapshot, deleteField, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 const fbApp = initializeApp(firebaseConfig);
 const db = getFirestore(fbApp);
@@ -318,6 +318,7 @@ const DEFAULT_BIRTHDAYS = {"Deborah Dias": {"mes": 9, "dia": 30, "foto": "data:i
 
 const now = new Date();
 const state = {
+  teamLoaded: false,
   team: [], person: null, year: now.getFullYear(), month: now.getMonth(),
   activeTab: 'meu', monthCache: {}, watched: {}, modalType: null, modalDay: null, modalDraft: null,
   bulkDraft: null, managingTeam: false, birthdays: {}, editingBirthdayFor: null, exportDraft: null, paintMode: null, rulesPanelOpen: false, todayFilter: null,
@@ -500,21 +501,52 @@ async function saveMonth(key){
 }
 function watchTeam(){
   onSnapshot(doc(db,'meta','equipe'), async snap=>{
-    if(snap.exists()){ state.team = snap.data().nomes || []; }
-    else { state.team = DEFAULT_TEAM.slice(); await setDoc(doc(db,'meta','equipe'), {nomes: state.team}); }
+    if(snap.exists()){
+      state.team = (snap.data().nomes || []).slice().sort((a,b)=>a.localeCompare(b,'pt-BR'));
+    } else {
+      // só cria a lista padrão se o SERVIDOR confirmou que ela não existe (nunca a partir de cache/offline)
+      if(snap.metadata && snap.metadata.fromCache) return;
+      state.team = DEFAULT_TEAM.slice();
+      await setDoc(doc(db,'meta','equipe'), { nomes: arrayUnion(...DEFAULT_TEAM) }, { merge:true });
+    }
+    state.teamLoaded = true;
     render();
   }, err=>console.error(err));
 }
-async function saveTeam(){ try{ await setDoc(doc(db,'meta','equipe'), {nomes: state.team}); }catch(e){ console.error(e); } }
+// Cada ação mexe em UMA pessoa, direto no servidor — nunca regrava a lista inteira a partir da memória do navegador.
+async function teamAdd(name){
+  await withRetry(()=> setDoc(doc(db,'meta','equipe'), { nomes: arrayUnion(name) }, { merge:true }));
+  logTeam('adicionar', name);
+}
+async function teamRemove(name){
+  await withRetry(()=> setDoc(doc(db,'meta','equipe'), { nomes: arrayRemove(name) }, { merge:true }));
+  logTeam('remover', name);
+}
+async function teamRestoreDefault(){
+  await withRetry(()=> setDoc(doc(db,'meta','equipe'), { nomes: arrayUnion(...DEFAULT_TEAM) }, { merge:true }));
+  logTeam('restaurar-padrao', DEFAULT_TEAM.length + ' nomes');
+}
+// Histórico de alterações da equipe (quem, o quê, quando), para investigar se algo sumir de novo
+function logTeam(acao, nome){
+  const key = Date.now() + '_' + Math.random().toString(36).slice(2,6);
+  setDoc(doc(db,'meta','equipe_log'), { [key]: { acao, nome, por: state.person || '(sem nome)', em: new Date().toISOString() } }, { merge:true })
+    .catch(e=>console.error(e));
+}
 
 function watchBirthdays(){
   onSnapshot(doc(db,'meta','aniversarios'), async snap=>{
     if(snap.exists()){ state.birthdays = snap.data() || {}; }
-    else { state.birthdays = DEFAULT_BIRTHDAYS; await setDoc(doc(db,'meta','aniversarios'), state.birthdays); }
+    else {
+      if(snap.metadata && snap.metadata.fromCache) return;
+      state.birthdays = DEFAULT_BIRTHDAYS;
+      await setDoc(doc(db,'meta','aniversarios'), DEFAULT_BIRTHDAYS, { merge:true });
+    }
     render();
   }, err=>console.error(err));
 }
-async function saveBirthdays(){ try{ await setDoc(doc(db,'meta','aniversarios'), state.birthdays); }catch(e){ console.error(e); alert('Não foi possível salvar o aniversário agora.'); } }
+async function saveBirthday(name, entry){
+  await withRetry(()=> setDoc(doc(db,'meta','aniversarios'), { [name]: entry }, { merge:true }));
+}
 function birthdaysOn(month1based, day){
   return Object.entries(state.birthdays)
     .filter(([name, b]) => b && b.mes === month1based && b.dia === day)
@@ -685,6 +717,7 @@ function teamManagerHTML(){
       <div class="add-person-inline">
         <input type="text" id="new-person-input" placeholder="Nome completo" style="width:200px;">
         <button class="btn btn-primary" id="confirm-add-person">Adicionar</button>
+        <button class="btn-text" id="restore-team" title="Re-adiciona quem estiver faltando da lista padrão, sem remover ninguém">restaurar equipe padrão</button>
       </div>
       <div class="team-manager-list">${rows || '<p class="hint">Nenhuma pessoa cadastrada.</p>'}</div>
     </div>`;
@@ -717,14 +750,25 @@ function bindPersonRow(afterChange){
     const input = document.getElementById('new-person-input');
     const name = input.value.trim();
     if(!name) return;
-    if(!state.team.includes(name)){ state.team.push(name); state.team.sort((a,b)=>a.localeCompare(b,'pt-BR')); await saveTeam(); }
+    if(!state.teamLoaded){ alert('Aguarde a lista da equipe carregar e tente de novo.'); return; }
+    if(!state.team.includes(name)){
+      try{ await teamAdd(name); }catch(e){ console.error(e); alert('Não foi possível adicionar agora. Tente novamente.'); return; }
+    }
     input.value=''; afterChange();
+  };
+  const restoreBtn = document.getElementById('restore-team');
+  if(restoreBtn) restoreBtn.onclick = async ()=>{
+    if(!confirm('Re-adicionar à equipe todas as pessoas da lista padrão que estiverem faltando? Ninguém será removido.')) return;
+    try{ await teamRestoreDefault(); alert('Equipe restaurada.'); }
+    catch(e){ console.error(e); alert('Não foi possível restaurar agora. Tente novamente.'); }
+    afterChange();
   };
   document.querySelectorAll('.remove-person').forEach(btn=>{
     btn.onclick = async ()=>{
       const name = btn.dataset.name;
-      if(!confirm(`Remover ${name} da equipe? O histórico de dias marcados não é apagado, ela só some da lista.`)) return;
-      state.team = state.team.filter(n=>n!==name); await saveTeam();
+      if(!state.teamLoaded){ alert('Aguarde a lista da equipe carregar e tente de novo.'); return; }
+      if(!confirm(`Remover ${name} da equipe para TODOS os colaboradores? O histórico de dias marcados não é apagado, só some das listas.`)) return;
+      try{ await teamRemove(name); }catch(e){ console.error(e); alert('Não foi possível remover agora. Tente novamente.'); return; }
       if(state.person === name){ state.person=null; localStorage.removeItem('meu-nome'); }
       afterChange();
     };
@@ -742,8 +786,9 @@ function bindPersonRow(afterChange){
     const existing = state.birthdays[name] || {};
     let foto = existing.foto;
     if(fileInput.files && fileInput.files[0]){ foto = await resizeImageFile(fileInput.files[0], 140); }
-    state.birthdays[name] = { dia, mes, ...(foto?{foto}:{}) };
-    await saveBirthdays();
+    const entry = { dia, mes, ...(foto?{foto}:{}) };
+    state.birthdays[name] = { ...(state.birthdays[name]||{}), ...entry };
+    try{ await saveBirthday(name, entry); }catch(e){ console.error(e); alert('Não foi possível salvar o aniversário agora.'); }
     state.editingBirthdayFor = null;
     afterChange();
   };
