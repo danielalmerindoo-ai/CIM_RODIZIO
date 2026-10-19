@@ -319,6 +319,8 @@ const DEFAULT_BIRTHDAYS = {"Deborah Dias": {"mes": 9, "dia": 30, "foto": "data:i
 const now = new Date();
 const state = {
   teamLoaded: false,
+  reportUnlocked: (()=>{ try{ return sessionStorage.getItem('cim-relatorio')==='1'; }catch(e){ return false; } })(),
+  unlockDraft: '', unlockError: '',
   team: [], person: null, year: now.getFullYear(), month: now.getMonth(),
   activeTab: 'meu', monthCache: {}, watched: {}, modalType: null, modalDay: null, modalDraft: null,
   bulkDraft: null, managingTeam: false, birthdays: {}, editingBirthdayFor: null, exportDraft: null, paintMode: null, rulesPanelOpen: false, todayFilter: null,
@@ -963,7 +965,7 @@ function openBulkModal(){
   state.bulkDraft = { start:1, end:1, statuses:[], local:'', note:'' };
   render();
 }
-function closeModal(){ state.modalType=null; state.modalDay=null; state.modalDraft=null; state.bulkDraft=null; state.exportDraft=null; const ov=document.getElementById('overlay'); if(ov) ov.remove(); render(); }
+function closeModal(){ state.modalType=null; state.modalDay=null; state.modalDraft=null; state.bulkDraft=null; state.exportDraft=null; state.unlockDraft=''; state.unlockError=''; const ov=document.getElementById('overlay'); if(ov) ov.remove(); render(); }
 
 function renderModal(){
   let ov = document.getElementById('overlay');
@@ -973,6 +975,7 @@ function renderModal(){
   else if(state.modalType==='bulk') renderBulkModal(ov);
   else if(state.modalType==='export') renderExportModal(ov);
   else if(state.modalType==='rules') renderRulesModal(ov);
+  else if(state.modalType==='unlock') renderUnlockModal(ov);
 }
 
 function openRulesModal(){ state.modalType = 'rules'; render(); }
@@ -1120,10 +1123,86 @@ function renderBulkModal(ov){
 }
 
 /* ---------- exportar relatório ---------- */
+/* ---------- trava da supervisão (relatório) ---------- */
+// Guardamos só o hash da senha (SHA-256 com sal), nunca a senha escrita.
+// Atenção: é uma trava na tela. Ela impede o uso casual, mas não substitui login de verdade.
+const REPORT_PASS_SALT = "cim-rodizio-relatorio:";
+const REPORT_PASS_HASH = "8e7c5fc8f5ce4fe29e86588fee552cdcc84c444e4e9a42529773264f6d5ec0fd";
+function sha256hex(str){
+  const K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  let H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const msg=Array.from(new TextEncoder().encode(str));
+  const bitLen=msg.length*8;
+  msg.push(0x80);
+  while(msg.length%64!==56) msg.push(0);
+  const hi=Math.floor(bitLen/0x100000000), lo=bitLen>>>0;
+  for(let i=3;i>=0;i--) msg.push((hi>>>(i*8))&255);
+  for(let i=3;i>=0;i--) msg.push((lo>>>(i*8))&255);
+  const rotr=(x,n)=>(x>>>n)|(x<<(32-n));
+  for(let off=0; off<msg.length; off+=64){
+    const w=new Array(64);
+    for(let i=0;i<16;i++) w[i]=(msg[off+i*4]<<24)|(msg[off+i*4+1]<<16)|(msg[off+i*4+2]<<8)|msg[off+i*4+3];
+    for(let i=16;i<64;i++){
+      const s0=rotr(w[i-15],7)^rotr(w[i-15],18)^(w[i-15]>>>3);
+      const s1=rotr(w[i-2],17)^rotr(w[i-2],19)^(w[i-2]>>>10);
+      w[i]=(w[i-16]+s0+w[i-7]+s1)|0;
+    }
+    let [a,b,c,d,e,f,g,h]=H;
+    for(let i=0;i<64;i++){
+      const S1=rotr(e,6)^rotr(e,11)^rotr(e,25);
+      const ch=(e&f)^(~e&g);
+      const t1=(h+S1+ch+K[i]+w[i])|0;
+      const S0=rotr(a,2)^rotr(a,13)^rotr(a,22);
+      const maj=(a&b)^(a&c)^(b&c);
+      const t2=(S0+maj)|0;
+      h=g; g=f; f=e; e=(d+t1)|0; d=c; c=b; b=a; a=(t1+t2)|0;
+    }
+    H=[(H[0]+a)|0,(H[1]+b)|0,(H[2]+c)|0,(H[3]+d)|0,(H[4]+e)|0,(H[5]+f)|0,(H[6]+g)|0,(H[7]+h)|0];
+  }
+  return H.map(x=>(x>>>0).toString(16).padStart(8,'0')).join('');
+}
+function lockReport(){ state.reportUnlocked = false; try{ sessionStorage.removeItem('cim-relatorio'); }catch(e){} }
 function openExportModal(){
+  if(!state.reportUnlocked){
+    state.modalType = 'unlock'; state.unlockDraft = ''; state.unlockError = '';
+    render(); return;
+  }
   state.modalType = 'export';
   state.exportDraft = { year: state.year, month: state.month };
   render();
+}
+function renderUnlockModal(ov){
+  ov.innerHTML = `
+    <div class="modal" style="max-width:360px;">
+      <h3 style="text-transform:none;">Área da supervisão</h3>
+      <div class="modal-person">Digite a senha para gerar relatórios.</div>
+      <div class="sub-field">
+        <input type="password" id="unlock-input" placeholder="Senha" autocomplete="off" value="${escapeHtml(state.unlockDraft)}">
+      </div>
+      <div class="gate-error">${escapeHtml(state.unlockError)}</div>
+      <div class="modal-actions">
+        <button class="btn-text" id="close-modal">cancelar</button>
+        <button class="btn btn-primary" id="unlock-submit">Entrar</button>
+      </div>
+    </div>`;
+  const inp = document.getElementById('unlock-input');
+  inp.oninput = ()=>{ state.unlockDraft = inp.value; };
+  const submit = ()=>{
+    if(sha256hex(REPORT_PASS_SALT + state.unlockDraft) === REPORT_PASS_HASH){
+      state.reportUnlocked = true;
+      try{ sessionStorage.setItem('cim-relatorio','1'); }catch(e){}
+      state.unlockDraft = ''; state.unlockError = '';
+      state.modalType = 'export'; state.exportDraft = { year: state.year, month: state.month };
+      render();
+    } else {
+      state.unlockError = 'Senha incorreta.'; state.unlockDraft = '';
+      renderModal();
+    }
+  };
+  document.getElementById('unlock-submit').onclick = submit;
+  inp.addEventListener('keydown', e=>{ if(e.key==='Enter') submit(); });
+  document.getElementById('close-modal').onclick = closeModal;
+  setTimeout(()=>{ inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }, 0);
 }
 
 function renderExportModal(ov){
@@ -1138,7 +1217,7 @@ function renderExportModal(ov){
         <div class="sub-field"><label>Ano</label><input type="number" id="export-year" value="${d.year}" min="2024" max="2035"></div>
       </div>
       <div class="modal-actions" style="gap:10px;">
-        <button class="btn-text" id="close-modal">cancelar</button>
+        <span><button class="btn-text" id="close-modal">cancelar</button> <button class="btn-text" id="lock-report" title="Pedir a senha de novo nesta aba">🔒 bloquear</button></span>
         <div style="display:flex;gap:8px;">
           <button class="btn" id="export-xlsx-btn">⬇️ Excel</button>
           <button class="btn btn-primary" id="export-pdf-btn">⬇️ PDF</button>
@@ -1148,6 +1227,7 @@ function renderExportModal(ov){
   document.getElementById('export-month').onchange = (e)=>{ state.exportDraft.month = parseInt(e.target.value,10); };
   document.getElementById('export-year').onchange = (e)=>{ state.exportDraft.year = parseInt(e.target.value,10); };
   document.getElementById('close-modal').onclick = closeModal;
+  document.getElementById('lock-report').onclick = ()=>{ lockReport(); closeModal(); };
   document.getElementById('export-xlsx-btn').onclick = async (e)=>{
     e.target.textContent = 'Gerando…';
     const { rows, year, month } = await buildReportData(state.exportDraft.year, state.exportDraft.month);
@@ -1163,42 +1243,55 @@ function renderExportModal(ov){
 }
 
 async function buildReportData(year, month){
-  const key = monthKey(year, month);
-  const data = await getMonthDataOnce(key);
   const nDays = daysInMonth(year, month);
+  const cache = {};
+  const dataOf = async (dt)=>{
+    const k = monthKey(dt.getFullYear(), dt.getMonth());
+    if(!cache[k]) cache[k] = await getMonthDataOnce(k);
+    return cache[k];
+  };
 
-  const weeksMap = {};
+  // Cada semana (seg–sex) pertence ao mês em que cai a sua QUINTA-feira.
+  // Assim uma semana que atravessa a virada do mês é avaliada inteira, uma única vez.
+  const weeks = [];
   for(let d=1; d<=nDays; d++){
     const date = new Date(year, month, d);
-    const dow = date.getDay();
-    if(dow===0 || dow===6) continue;
-    const mkey = dateKey(weekMondayOf(date));
-    if(!weeksMap[mkey]) weeksMap[mkey] = [];
-    weeksMap[mkey].push(d);
+    if(date.getDay()===4){
+      const monday = addDays(date, -3);
+      weeks.push([0,1,2,3,4].map(i=>addDays(monday, i)));
+    }
   }
-  const weekKeys = Object.keys(weeksMap).sort();
+  await dataOf(new Date(year, month, 1));
+  for(const w of weeks) for(const dt of w) await dataOf(dt);
+  const entryOf = (person, dt)=> getEntry(cache[monthKey(dt.getFullYear(), dt.getMonth())], person, dt.getDate());
 
   const rows = state.team.map(person=>{
+    // Totais por status: dias úteis do próprio mês
     const totals = { P:0, H:0, E:0, O:0 };
+    for(let d=1; d<=nDays; d++){
+      const dt = new Date(year, month, d);
+      if(dt.getDay()===0 || dt.getDay()===6) continue;
+      const e = entryOf(person, dt);
+      if(e && e.statuses) e.statuses.forEach(st=>{ totals[st] = (totals[st]||0)+1; });
+    }
+    // Meta semanal: mínimo de 2 dias presenciais.
+    //  - Externo/Outro (sem presencial) e feriado (sem presencial) ficam de fora da conta;
+    //  - dia vazio conta contra; Home Office conta como dia sem presencial;
+    //  - se sobrarem menos de 2 dias elegíveis na semana, o mínimo cai para esse número.
     let weeksBelow = 0, weeksCounted = 0;
-    weekKeys.forEach(wk=>{
-      let pCount = 0;
-      let eligibleDays = 0; // dias que entram no cálculo do mínimo (exclui Externo/Outro puros)
-      weeksMap[wk].forEach(d=>{
-        const e = getEntry(data, person, d);
-        if(e && e.statuses){
-          e.statuses.forEach(s=>{ totals[s] = (totals[s]||0)+1; });
-          const isExempt = (e.statuses.includes('E') || e.statuses.includes('O')) && !e.statuses.includes('P');
-          if(!isExempt){ eligibleDays++; if(e.statuses.includes('P')) pCount++; }
-        } else {
-          // dia não preenchido: conta como elegível (pode pesar contra a pessoa)
-          eligibleDays++;
-        }
+    weeks.forEach(w=>{
+      let pCount = 0, eligible = 0;
+      w.forEach(dt=>{
+        const e = entryOf(person, dt);
+        const sts = (e && e.statuses) ? e.statuses : [];
+        const hasP = sts.includes('P');
+        const holiday = !!holidayFor(dt.getFullYear(), dt.getMonth(), dt.getDate());
+        const exempt = !hasP && (sts.includes('E') || sts.includes('O') || holiday);
+        if(!exempt){ eligible++; if(hasP) pCount++; }
       });
-      if(eligibleDays > 0){
+      if(eligible > 0){
         weeksCounted++;
-        const requiredMin = Math.min(MIN_PRESENCIAL_WEEK, eligibleDays);
-        if(pCount < requiredMin) weeksBelow++;
+        if(pCount < Math.min(MIN_PRESENCIAL_WEEK, eligible)) weeksBelow++;
       }
     });
     return {
@@ -1246,7 +1339,7 @@ function renderPainelTab(){
   const el = document.getElementById('tab-content');
   el.innerHTML = dayNavHTML() + `
     <div class="quick-actions" style="justify-content:center;">
-      <button class="btn" id="export-report-btn">📄 Exportar relatório</button>
+      <button class="btn" id="export-report-btn">${state.reportUnlocked ? '📄' : '🔒'} Exportar relatório</button>
     </div>
   ` + `<div id="painel-holder"></div>`;
   bindDayNav(render);
